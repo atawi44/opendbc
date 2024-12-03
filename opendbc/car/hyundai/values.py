@@ -340,6 +340,10 @@ class CAR(Platforms):
     CarSpecs(mass=1690, wheelbase=3.055, steerRatio=17),  # mass: from https://www.hyundai-motor.com.tw/clicktobuy/custin#spec_0, steerRatio: from learner
     flags=HyundaiFlags.CHECKSUM_CRC8,
   )
+  HYUNDAI_AZERA_Diesel_2019 = HyundaiPlatformConfig(
+    [HyundaiCarDocs("Hyundai Azera Diesel 2019", "All", car_parts=CarParts.common([CarHarness.hyundai_c]))],
+    CarSpecs(mass=1836, wheelbase=2.845, steerRatio=13.0),
+  )
 
   # Kia
   KIA_FORTE = HyundaiPlatformConfig(

@@ -680,6 +680,19 @@ FW_VERSIONS = {
       b'\xf1\x00SX2EMFC  AT KOR LHD 1.00 1.00 99211-BF000 230410',
     ],
   },
+  CAR.HYUNDAI_AZERA_Diesel_2019: {
+    (Ecu.fwdRadar, 0x7d0, None): [
+      b'\xf1\x00IG__ SCC FHCUP      1.00 1.01 96400-G8500         ',
+      b'\xf1\x10\x1f\x00\x00\x00         ',
+    ],
+    (Ecu.eps, 0x7d4, None): [
+      b'\xf1\x00IG  MDPS C 1.00 1.01 56310G8350\x00 4IG8C101',
+      b'\xf1\x8b \x18\x06)',
+    ],
+    (Ecu.fwdCamera, 0x7c4, None): [
+      b'\xf1\x00IG  MFC  AT KOR LHD 1.00 1.00 95740-M9200 170919',
+    ],
+  },
   CAR.KIA_NIRO_EV: {
     (Ecu.fwdRadar, 0x7d0, None): [
       b'\xf1\x00DEev SCC F-CUP      1.00 1.00 99110-Q4000         ',
