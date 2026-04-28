@@ -48,6 +48,11 @@ class CarInterface(CarInterfaceBase):
       ret.flags |= TeslaFlags.FSD_14.value
       ret.safetyConfigs[0].safetyParam |= TeslaSafetyFlags.FSD_14.value
 
+    # This PR only retunes legacy Model 3/Y to 10.3.
+    # FSD14-identified variants keep the current 12.0 behavior.
+    if candidate in (CAR.TESLA_MODEL_3, CAR.TESLA_MODEL_Y) and fsd_14:
+      ret.steerRatio = 12.0
+
     ret.dashcamOnly = candidate in (CAR.TESLA_MODEL_X,)  # dashcam only, pending find invalidLkasSetting signal
 
     return ret
