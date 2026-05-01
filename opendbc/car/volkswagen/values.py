@@ -7,6 +7,7 @@ from opendbc.can import CANDefine
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.docs_definitions import CarFootnote, CarHarness, CarDocs, CarParts, Column
 from opendbc.car.fw_query_definitions import EcuAddrSubAddr, FwQueryConfig, Request, p16
+from opendbc.car.lateral import AngleSteeringLimits
 from opendbc.car.vin import Vin
 
 Ecu = structs.CarParams.Ecu
@@ -99,6 +100,35 @@ class CarControllerParams:
         "laneAssistDeactivTrailer": 5,  # "Lane Assist: no function with trailer"
       }
 
+    elif CP.flags & VolkswagenFlags.MEB:
+      self.LDW_STEP = 10
+      self.ACC_HUD_STEP = 6              # MEB_ACC_01 HUD frequency 16Hz
+      self.ACC_CONTROL_STEP = 2          # ACC_18 acceleration request, 50Hz
+      self.STEER_DRIVER_ALLOWANCE = 80   # 0.8 Nm
+      self.STEERING_POWER_MAX = 50
+
+      self.CURVATURE_LIMITS = AngleSteeringLimits(
+        STEER_ANGLE_MAX=0.195,                              # rad/m
+        ANGLE_RATE_LIMIT_UP=([0., 5., 25.], [0.04, 0.04, 0.005]),
+        ANGLE_RATE_LIMIT_DOWN=([0., 5., 25.], [0.04, 0.04, 0.005]),
+      )
+
+      self.hca_status_values = can_define.dv["QFK_01"]["LatCon_HCA_Status"]
+      self.shifter_values = can_define.dv["Gateway_73"]["GE_Fahrstufe"]
+
+      self.BUTTONS = [
+        Button(structs.CarState.ButtonEvent.Type.setCruise, "GRA_ACC_01", "GRA_Tip_Setzen", [1]),
+        Button(structs.CarState.ButtonEvent.Type.resumeCruise, "GRA_ACC_01", "GRA_Tip_Wiederaufnahme", [1]),
+        Button(structs.CarState.ButtonEvent.Type.accelCruise, "GRA_ACC_01", "GRA_Tip_Hoch", [1]),
+        Button(structs.CarState.ButtonEvent.Type.decelCruise, "GRA_ACC_01", "GRA_Tip_Runter", [1]),
+        Button(structs.CarState.ButtonEvent.Type.cancel, "GRA_ACC_01", "GRA_Abbrechen", [1]),
+        Button(structs.CarState.ButtonEvent.Type.gapAdjustCruise, "GRA_ACC_01", "GRA_Verstellung_Zeitluecke", [3]),
+      ]
+
+      self.LDW_MESSAGES = {
+        "laneAssistTakeOver": 8,
+      }
+
     else:
       self.LDW_STEP = 10                  # LDW_02 message frequency 10Hz
       self.ACC_HUD_STEP = 6               # ACC_02 message frequency 16Hz
@@ -188,6 +218,7 @@ class VolkswagenFlags(IntFlag):
   # Static flags
   PQ = 2
   MLB = 8
+  MEB = 16
 
 
 @dataclass
@@ -198,6 +229,16 @@ class VolkswagenMLBPlatformConfig(PlatformConfig):
 
   def init(self):
     self.flags |= VolkswagenFlags.MLB
+
+
+@dataclass
+class VolkswagenMEBPlatformConfig(PlatformConfig):
+  dbc_dict: DbcDict = field(default_factory=lambda: {Bus.pt: 'vw_meb', Bus.radar: 'vw_meb'})
+  chassis_codes: set[str] = field(default_factory=set)
+  wmis: set[WMI] = field(default_factory=set)
+
+  def init(self):
+    self.flags |= VolkswagenFlags.MEB
 
 
 @dataclass
@@ -269,7 +310,7 @@ class VWCarDocs(CarDocs):
 # FW_VERSIONS for that existing CAR.
 
 class CAR(Platforms):
-  config: VolkswagenMQBPlatformConfig | VolkswagenPQPlatformConfig
+  config: VolkswagenMQBPlatformConfig | VolkswagenPQPlatformConfig | VolkswagenMEBPlatformConfig
 
   VOLKSWAGEN_ARTEON_MK1 = VolkswagenMQBPlatformConfig(
     [
@@ -420,6 +461,12 @@ class CAR(Platforms):
     [VWCarDocs("Volkswagen T-Roc 2018-23")],
     VolkswagenCarSpecs(mass=1413, wheelbase=2.63),
     chassis_codes={"A1"},
+    wmis={WMI.VOLKSWAGEN_EUROPE_SUV},
+  )
+  VOLKSWAGEN_ID4_MK1 = VolkswagenMEBPlatformConfig(
+    [VWCarDocs("Volkswagen ID.4 2021-23")],
+    VolkswagenCarSpecs(mass=2224, wheelbase=2.77),
+    chassis_codes={"E2"},
     wmis={WMI.VOLKSWAGEN_EUROPE_SUV},
   )
   AUDI_A3_MK3 = VolkswagenMQBPlatformConfig(

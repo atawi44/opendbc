@@ -1,10 +1,10 @@
 import numpy as np
 from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL, structs
-from opendbc.car.lateral import apply_driver_steer_torque_limits
+from opendbc.car.lateral import apply_driver_steer_torque_limits, apply_std_steer_angle_limits
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.interfaces import CarControllerBase
-from opendbc.car.volkswagen import mlbcan, mqbcan, pqcan
+from opendbc.car.volkswagen import mebcan, mlbcan, mqbcan, pqcan
 from opendbc.car.volkswagen.values import CanBus, CarControllerParams, VolkswagenFlags
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
@@ -50,9 +50,15 @@ class CarController(CarControllerBase):
 
     self.apply_torque_last = 0
     self.gra_acc_counter_last = None
-    self.hca_mitigation = HCAMitigation(self.CCP)
+    self.hca_mitigation = HCAMitigation(self.CCP) if not (CP.flags & VolkswagenFlags.MEB) else None
+
+    self.apply_curvature_last = 0.0
+    self.accel_last = 0.0
 
   def update(self, CC, CS, now_nanos):
+    if self.CP.flags & VolkswagenFlags.MEB:
+      return self.update_meb(CC, CS, now_nanos)
+
     actuators = CC.actuators
     hud_control = CC.hudControl
     can_sends = []
@@ -126,6 +132,65 @@ class CarController(CarControllerBase):
     new_actuators = actuators.as_builder()
     new_actuators.torque = self.apply_torque_last / self.CCP.STEER_MAX
     new_actuators.torqueOutputCan = self.apply_torque_last
+
+    self.gra_acc_counter_last = CS.gra_stock_values["COUNTER"]
+    self.frame += 1
+    return new_actuators, can_sends
+
+  def update_meb(self, CC, CS, now_nanos):
+    actuators = CC.actuators
+    hud_control = CC.hudControl
+    can_sends = []
+
+    override = CC.cruiseControl.override or CS.out.gasPressed
+    acc_control = mebcan.acc_control_value(CS.out.cruiseState.available, CS.out.accFaulted, CC.enabled, override)
+
+    # **** Steering ********************************************************* #
+
+    if self.frame % self.CCP.STEER_STEP == 0:
+      # closed loop EPS tracking so the rack follows our intent, not its own model
+      desired_curvature = actuators.curvature + (CS.measured_curvature - CC.currentCurvature)
+      apply_curvature = apply_std_steer_angle_limits(desired_curvature, self.apply_curvature_last, CS.out.vEgoRaw,
+                                                     CS.measured_curvature, CC.latActive, self.CCP.CURVATURE_LIMITS)
+      self.apply_curvature_last = apply_curvature
+      can_sends.append(mebcan.create_steering_control(self.packer_pt, self.CAN.pt, apply_curvature, CC.latActive,
+                                                      self.CCP.STEERING_POWER_MAX))
+
+    # **** Acceleration ***************************************************** #
+
+    if self.CP.openpilotLongitudinalControl and self.frame % self.CCP.ACC_CONTROL_STEP == 0:
+      stopping = actuators.longControlState == LongCtrlState.stopping
+      starting = actuators.longControlState == LongCtrlState.pid and (CS.esp_hold_confirmation or CS.out.vEgo < self.CP.vEgoStopping)
+      accel = float(np.clip(actuators.accel, self.CCP.ACCEL_MIN, self.CCP.ACCEL_MAX) if CC.enabled else 0)
+      ts = DT_CTRL * self.CCP.ACC_CONTROL_STEP
+      accel = float(np.clip(accel, self.accel_last - 2.0 * ts, self.accel_last + 2.0 * ts))
+      self.accel_last = 0.0 if override else accel
+      can_sends.append(mebcan.create_acc_accel_control(self.packer_pt, self.CAN.pt, CS.acc_type, CC.enabled, accel,
+                                                       acc_control, stopping, starting, CS.esp_hold_confirmation,
+                                                       override))
+
+    # **** HUD ************************************************************** #
+
+    if self.frame % self.CCP.LDW_STEP == 0:
+      hud_alert = 0
+      if hud_control.visualAlert in (VisualAlert.steerRequired, VisualAlert.ldw):
+        hud_alert = self.CCP.LDW_MESSAGES["laneAssistTakeOver"]
+      can_sends.append(mebcan.create_lka_hud_control(self.packer_pt, self.CAN.pt, CS.ldw_stock_values, CC.latActive,
+                                                     CS.out.steeringPressed, hud_alert, hud_control))
+
+    if self.CP.openpilotLongitudinalControl and self.frame % self.CCP.ACC_HUD_STEP == 0:
+      set_speed = hud_control.setSpeed * CV.MS_TO_KPH
+      can_sends.append(mebcan.create_acc_hud_control(self.packer_pt, self.CAN.pt, acc_control, set_speed))
+
+    # **** Stock ACC Button Controls **************************************** #
+
+    gra_send_ready = self.CP.pcmCruise and CS.gra_stock_values["COUNTER"] != self.gra_acc_counter_last
+    if gra_send_ready and (CC.cruiseControl.cancel or CC.cruiseControl.resume):
+      can_sends.append(mebcan.create_acc_buttons_control(self.packer_pt, self.CAN.ext, CS.gra_stock_values,
+                                                         cancel=CC.cruiseControl.cancel, resume=CC.cruiseControl.resume))
+
+    new_actuators = actuators.as_builder()
+    new_actuators.curvature = float(self.apply_curvature_last)
 
     self.gra_acc_counter_last = CS.gra_stock_values["COUNTER"]
     self.frame += 1
